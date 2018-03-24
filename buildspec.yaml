@@ -1,0 +1,33 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - apt-get update
+      - apt-get install -y jq
+  pre_build:
+    commands:
+      - echo "Building image ${IMAGE_NAME}"
+      - export PACKAGE_VERSION=$(jq -r ".version" package.json)
+      - export ACCOUNT_ID=$(echo $CODEBUILD_BUILD_ARN | cut -d ":" -f5)
+      - export BUILD_ID=$(echo $CODEBUILD_BUILD_ID | cut -d ":" -f2)
+      - export REPOSITORY_URL=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo "REPOSITORY_URL=${REPOSITORY_URL}"
+      - echo "PACKAGE_VERSION=${PACKAGE_VERSION}"
+      - echo "BUILD_ID=${BUILD_ID}"
+      - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+  build:
+    commands:
+      - docker build -t $IMAGE_NAME .
+      - docker tag $IMAGE_NAME $REPOSITORY_URL/$IMAGE_NAME:latest
+      - docker tag $IMAGE_NAME $REPOSITORY_URL/$IMAGE_NAME:$PACKAGE_VERSION
+      - docker tag $IMAGE_NAME $REPOSITORY_URL/$IMAGE_NAME:$BUILD_ID
+  post_build:
+    commands:
+      - docker push $REPOSITORY_URL/$IMAGE_NAME:latest
+      - docker push $REPOSITORY_URL/$IMAGE_NAME:$PACKAGE_VERSION
+      - docker push $REPOSITORY_URL/$IMAGE_NAME:$BUILD_ID
+      - docker images -q $REPOSITORY_URL/$IMAGE_NAME:latest > imageid
+artifacts:
+  files:
+    - imageid

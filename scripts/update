@@ -1,0 +1,11 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+aws cloudformation update-stack \
+      --stack-name "${LIBRARY_NAME}-${IMAGE_NAME}-stack" \
+      --parameters ParameterKey=ImageName,ParameterValue=$IMAGE_NAME \
+                   ParameterKey=ImageLibraryName,ParameterValue=$LIBRARY_NAME \
+      --template-body file://$DIR/stack.yaml \
+      --capabilities CAPABILITY_IAM \
+      --capabilities CAPABILITY_NAMED_IAM

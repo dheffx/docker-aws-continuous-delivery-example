@@ -1,0 +1,26 @@
+{
+  "name": "docker-aws-continuous-delivery-example",
+  "version": "1.0.0",
+  "description": "example templates for docker image continuous delivery using aws devtools",
+  "repository": "https://github.com/dheffx/docker-aws-continuous-delivery-example.git",
+  "scripts": {
+    "buildspec-validate": "./node_modules/yaml-lint/cli.js buildspec.yaml",
+    "cfn-validate": "TEMPLATE=$(cat stack.yaml) && aws cloudformation validate-template --template-body \"${TEMPLATE}\"",
+    "validate": "npm run buildspec-validate && npm run cfn-validate"
+  },
+  "keywords": [
+    "aws",
+    "docker",
+    "ecr",
+    "codebuild",
+    "cloudformation",
+    "codecommit",
+    "codepipeline",
+    "continuous-delivery"
+  ],
+  "author": "Daniel Heffner",
+  "license": "ISC",
+  "devDependencies": {
+    "yaml-lint": "^1.2.2"
+  }
+}

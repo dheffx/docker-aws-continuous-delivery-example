@@ -1,0 +1,239 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CodeCommit->CodePipeline->CodeBuild->ECR Example for Docker Image Continuous Delivery
+
+Parameters:
+
+  ImageName:
+    Description: Name of the image this stack will create
+    Type: String
+
+  ImageLibraryName:
+    Description: Name of your docker image library
+    Type: String
+
+Resources:
+
+  ProjectCodeCommit:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryDescription: Example Project Repository
+      RepositoryName: !Ref AWS::StackName
+
+  ProjectECR:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Join
+        - '/'
+        - - !Ref ImageLibraryName
+          - !Ref ImageName
+
+  ProjectS3BuildArtifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${ImageLibraryName}-${ImageName}-build-artifacts
+
+  ProjectS3PipelineArtifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketName: !Sub ${ImageLibraryName}-${ImageName}-pipeline-artifacts
+
+  ProjectCodeBuildIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ImageLibraryName}-${ImageName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  ProjectCodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: CloudWatchLogsPolicy
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+          - Sid: CodeCommitPolicy
+            Effect: Allow
+            Action:
+              - codecommit:GitPull
+            Resource: !GetAtt ProjectCodeCommit.Arn
+          - Sid: S3GetPolicy
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:GetBucketVersioning
+            Resource: "*"
+          - Sid: S3PutPolicy
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource: "*"
+          - Sid: ECRAllowPushPull
+            Effect: Allow
+            Action:
+             - ecr:GetDownloadUrlForLayer
+             - ecr:BatchGetImage
+             - ecr:BatchCheckLayerAvailability
+             - ecr:PutImage
+             - ecr:InitiateLayerUpload
+             - ecr:UploadLayerPart
+             - ecr:CompleteLayerUpload
+            Resource: !GetAtt ProjectECR.Arn
+          - Sid: ECRGetAuth
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+            Resource: "*"
+      PolicyName: !Sub ${ImageName}-codebuild-policy
+      Roles:
+        - !Ref ProjectCodeBuildIamRole
+
+  ProjectCodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Location: !Ref ProjectS3BuildArtifacts
+        Name: imageid
+        NamespaceType: BUILD_ID
+        Type: S3
+      BadgeEnabled: true
+      Cache:
+        Type: NO_CACHE
+      Description: Example Project Builder
+      Environment:
+        Image: aws/codebuild/docker:17.09.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: IMAGE_NAME
+            Type: PLAINTEXT
+            Value: !Join
+              - '/'
+              - - !Ref ImageLibraryName
+                - !Ref ImageName
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+      Name: !Ref AWS::StackName
+      ServiceRole: !Ref ProjectCodeBuildIamRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt ProjectCodeCommit.CloneUrlHttp
+        GitCloneDepth: 1
+
+  ProjectCodePipelineIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ImageLibraryName}-${ImageName}-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  ProjectCodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: S3GetPolicy
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:GetBucketVersioning
+            Resource: "*"
+          - Sid: S3PutPolicy
+            Effect: Allow
+            Action:
+              - s3:PutObject
+            Resource: "*"
+          - Sid: CodeCommitPolicy
+            Effect: Allow
+            Action:
+              - codecommit:GetBranch
+              - codecommit:GetCommit
+              - codecommit:UploadArchive
+              - codecommit:GetUploadArchiveStatus
+              - codecommit:CancelUploadArchive
+            Resource: !GetAtt ProjectCodeCommit.Arn
+          - Sid: CodeBuildPolicy
+            Effect: Allow
+            Action:
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+            Resource: !GetAtt ProjectCodeBuild.Arn
+      PolicyName: !Sub ${ImageName}-codepipeline-policy
+      Roles:
+        - !Ref ProjectCodePipelineIamRole
+
+  ProjectCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref ProjectS3PipelineArtifacts
+        Type: S3
+      Name: !Sub ${ImageName}-pipeline
+      RoleArn: !GetAtt ProjectCodePipelineIamRole.Arn
+      Stages:
+        -
+          Name: Source
+          Actions:
+            -
+              Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                PollForSourceChanges: true
+                RepositoryName: !GetAtt ProjectCodeCommit.Name
+                BranchName: master
+              OutputArtifacts:
+                - Name: src
+        -
+          Name: BuildAndPushImage
+          Actions:
+            -
+              Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref ProjectCodeBuild
+              InputArtifacts:
+                - Name: src
+
+Outputs:
+
+  CodeCommitRepoUrl:
+    Description: CodeCommit Repository HTTP URL
+    Value: !GetAtt ProjectCodeCommit.CloneUrlHttp
+
+  ImageRepoName:
+    Description: ECR Name
+    Value: !Ref ProjectECR
